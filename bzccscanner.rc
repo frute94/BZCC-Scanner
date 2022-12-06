@@ -1,0 +1,45 @@
+#include "winuser.h" // For VIRTKEY keycodes
+#include "resource.h"
+1 ICON "icon.ico"
+
+// Main window
+2 ACCELERATORS
+BEGIN
+	VK_F5, IDM_REFRESH, VIRTKEY
+	VK_F2, IDM_RENAME, VIRTKEY
+	0x50, IDM_PREFERENCES, VIRTKEY, CONTROL, ALT
+END
+
+// Rename dialog
+3 ACCELERATORS
+BEGIN
+	0x41, IDM_REN_SELALL, VIRTKEY, CONTROL
+	VK_RETURN, IDM_REN_SUBMIT, VIRTKEY
+	VK_ESCAPE, IDM_REN_CLOSE, VIRTKEY
+	VK_DELETE, IDM_REN_DELETE, VIRTKEY
+END
+
+6 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "080904E4"
+    BEGIN
+      VALUE "CompanyName", "Frute Software"
+      VALUE "FileDescription", "BZCC Scanner"
+      VALUE "FileVersion", "1.0"
+      VALUE "InternalName", "bzccscanner"
+      VALUE "LegalCopyright", "Frute Software"
+      VALUE "OriginalFilename", "bzccscanner.exe"
+      VALUE "ProductName", "BZCC Scanner"
+      VALUE "ProductVersion", "1.0"
+    END
+  END
+
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x809, 1252
+  END
+END
