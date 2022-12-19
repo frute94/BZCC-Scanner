@@ -1,13 +1,21 @@
 #include "bzccnet.h" // apparently winsock2.h must be included before windows.h; which is done in bzccnet, the network portion of this software.
 #include "bzccscanner.h"
-#include "bzccb64.h"
 #include "bzccsettings.h"
-
 #include "resource.h"
 #include <commctrl.h>
 #include <windowsx.h>
 #include <math.h>
 #include <stdio.h>
+
+BOOL b64decode(const char *b64_data, char *output, DWORD output_size) {
+	DWORD size = output_size;
+	if (!CryptStringToBinaryA(b64_data, 0, CRYPT_STRING_BASE64, (BYTE*)output, &size, NULL, NULL)) {
+		CopyMemory(output, "B64 DECODE ERROR\0", 17);
+		return FALSE;
+	}
+	
+	return TRUE;
+}
 
 BOOL UserIDIsValid(const TCHAR *user_id) {
 	for (DWORD i=0; user_id[i]; i++) {
@@ -104,13 +112,13 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 	}
 	
 	if (pKvi->server_index >= MAX_SERVERS || pKvi->player_index >= MAX_PLAYERS) {
-		printf("ERROR: Player or server index out of range.\n");
+		snwprintf(pKvi->err, ERRMSG_BUFLEN, TEXT("Player or server index out of range."));
 		return 1;
 	}
 	
 	if (pKvi->server_index >= pWc->scan_count_servers) {
 		if (pKvi->server_index >= pWc->scan_count_servers+1) {
-			printf("ERROR: Data skipped over server index.\n");
+			snwprintf(pKvi->err, ERRMSG_BUFLEN, TEXT("Data skipped over server index."));
 			return 1;
 		}
 		
@@ -120,6 +128,8 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 		ZeroMemory(pWc->scan_game, sizeof(GameInfo)); // New server begin
 	}
 	
+	printf("\"%s\": %s\n", pKvi->key_str, pKvi->value_str);
+	
 	if (pKvi->is_player) {
 		if (pWc->scan_game == NULL) {
 			// No known server to add player info to
@@ -128,7 +138,7 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 		
 		if (pKvi->player_index >= pWc->scan_count_players) {
 			if (pKvi->player_index >= pWc->scan_count_players+1) {
-				printf("ERROR: Data skipped over player index.\n");
+				snwprintf(pKvi->err, ERRMSG_BUFLEN, TEXT("Data skipped over player index."));
 				return 1;
 			}
 			
@@ -197,6 +207,10 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 			
 			case SERVERKEY_MAX_PING:
 				pWc->scan_game->max_ping = atoi(pKvi->value_str);
+			break;
+			
+			case SERVERKEY_PING:
+				pWc->scan_game->server_ping = atoi(pKvi->value_str);
 			break;
 			
 			case SERVERKEY_GAMETIME:
@@ -270,7 +284,7 @@ BOOL GameInfoToRow(HWND hLV, GameInfo *pGameInfo) {
 	ListView_SetItem(hLV, &lvi);
 	
 	lvi.iSubItem += 1;
-	snwprintf(tmpstr, len, TEXT("")); // TODO - Get ping
+	snwprintf(tmpstr, len, TEXT("%d"), pGameInfo->server_ping);
 	lvi.pszText = tmpstr;
 	ListView_SetItem(hLV, &lvi);
 	
@@ -628,8 +642,8 @@ int CALLBACK CompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort) {
 		
 		case COL_PING:
 			int_compare = TRUE;
-			int_1 = gGameInfo1->max_ping;
-			int_2 = gGameInfo2->max_ping;
+			int_1 = gGameInfo1->server_ping;
+			int_2 = gGameInfo2->server_ping;
 		break;
 		
 		case COL_PLAYERS:
@@ -1165,7 +1179,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 					// User selected a different server
 					pGameInfo = (GameInfo*)lParam;
 					if (pGameInfo && pGameInfo != pWc->pSelectedGameInfo) {
-						TCHAR hostmsg_str[512], modlist_str[256]; DWORD offset = 0;
+						TCHAR hostmsg_str[1024], modlist_str[512]; DWORD offset = 0;
 						pWc->pSelectedGameInfo = pGameInfo;
 						pWc->pSelectedPlayerInfo = NULL;
 						ListBox_ResetContent(pWc->hPlayerList);
@@ -1181,12 +1195,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 								}
 								break;
 							}
-							offset += snwprintf(modlist_str + offset, 256-offset, TEXT("%lu\r\n"), pGameInfo->mod_id[i]);
+							offset += snwprintf(modlist_str + offset, 512-offset, TEXT("%lu\r\n"), pGameInfo->mod_id[i]);
 						}
 						
 						snwprintf(
 							hostmsg_str,
-							256,
+							1024,
 							TEXT(
 								"%ls\r\n" // TODO: Actual map name, not bzn name.
 								"%ls\r\n" // Game mode

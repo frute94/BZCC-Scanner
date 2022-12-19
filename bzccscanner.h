@@ -79,7 +79,7 @@
 
 #define COLUMN_COUNT 7
 #define MAX_SERVERS 128
-#define MAX_PLAYERS 14
+#define MAX_PLAYERS 16
 #define MAX_MODS 32
 
 typedef struct PlayerInfo {
@@ -103,6 +103,7 @@ typedef struct GameInfo {
 	TCHAR mod_name[SERVER_NAME_LEN]; // TODO - just a string of the int for now
 	
 	int max_ping;
+	int server_ping;
 	int gametime;
 	int playerlimit;
 	int timelimit;
@@ -239,6 +240,7 @@ const KeyToIdentifier PLAYER_KEY_TO_ID[] = {
 #define SERVERKEY_GAMETYPE 11
 #define SERVERKEY_TIMELIMIT 12
 #define SERVERKEY_KILLLIMIT 13
+#define SERVERKEY_PING 14
 const KeyToIdentifier SERVER_KEY_TO_ID[] = {
 	{"n", SERVERKEY_NAME},
 	{"m", SERVERKEY_MAP},
@@ -247,7 +249,7 @@ const KeyToIdentifier SERVER_KEY_TO_ID[] = {
 	{"mu", 0}, // ?
 	{"gt", SERVERKEY_GAMETYPE},
 	{"gtd", 0}, // ?
-	{"pg", 0}, // ?
+	{"pg", SERVERKEY_PING}, // Ping to master server?
 	{"pgm", SERVERKEY_MAX_PING},
 	{"t", 0}, // ?
 	{"mm", SERVERKEY_MODSTRING},
