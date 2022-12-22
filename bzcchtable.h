@@ -19,6 +19,7 @@ typedef struct HT_Table {
 } HT_Table;
 
 DWORD CalcCRC32(const TCHAR *str);
+DWORD CalcCRC32A(const char *str);
 
 const TCHAR* HT_Find_crc32(HT_Table *ht, DWORD crc32);
 

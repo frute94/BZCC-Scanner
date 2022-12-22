@@ -78,6 +78,17 @@ DWORD CalcCRC32(const TCHAR *str) {
 	return crc ^ 0xFFFFFFFF;
 }
 
+DWORD CalcCRC32A(const char *str) {
+	DWORD crc = 0xFFFFFFFF;
+	
+	for (DWORD i=0; str[i]; i++) {
+		const DWORD lookupIndex = (crc ^ str[i]) & 0xFF;
+		crc = (crc >> 8) ^ CRC32_TABLE[lookupIndex];
+	}
+	
+	return crc ^ 0xFFFFFFFF;
+}
+
 BOOL HT_CopyStr(HT_TableEntry *entry, const TCHAR *string) {
 	DWORD i = 0;
 	while (i<HT_MAX_STR && string[i]) {

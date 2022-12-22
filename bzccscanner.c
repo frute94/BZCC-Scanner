@@ -1,19 +1,133 @@
 #include "bzccnet.h" // apparently winsock2.h must be included before windows.h; which is done in bzccnet, the network portion of this software.
 #include "bzccscanner.h"
 #include "bzccsettings.h"
+#include "bzcchtable.h"
 #include "resource.h"
 #include <commctrl.h>
 #include <windowsx.h>
 #include <math.h>
 #include <stdio.h>
 
-BOOL b64decode(const char *b64_data, char *output, DWORD output_size) {
+void ShowBalloon(WindowControls *pWc, const TCHAR *text, const TCHAR *title) {
+	snwprintf(pWc->pTray->szInfo, 256, TEXT("%ls"), text);
+	snwprintf(pWc->pTray->szInfoTitle, 64, TEXT("%ls"), title);
+	pWc->pTray->uFlags = NIF_MESSAGE | NIF_ICON | NIF_INFO;
+	Shell_NotifyIcon(NIM_MODIFY, pWc->pTray);
+}
+
+enum GAME_NOTIFY_ACTION {
+	GAME_NEW,
+	GAME_QUIT,
+} GAME_NOTIFY_ACTION;
+
+int GetGameTitle(GameInfo *pGameInfo, TCHAR *buf) {
+	return snwprintf(buf, 64, TEXT("\"%ls\" playing %ls %d/%d"), pGameInfo->name, pGameInfo->map, pGameInfo->player_count, pGameInfo->playerlimit);
+}
+
+const TCHAR* GetPlayerName(BOOL use_local_name, PlayerInfo *pPlayerInfo) {
+	if (use_local_name) {
+		return pPlayerInfo->local_name[0] ? pPlayerInfo->local_name : pPlayerInfo->ingame_name;
+	} else {
+		return pPlayerInfo->ingame_name;
+	}
+}
+
+void CALLBACK NotifyGameChanged(WindowControls *pWc, GameInfo *pGameInfo, enum GAME_NOTIFY_ACTION action) {
+	TCHAR title[64], text[256];
+	const TCHAR *host_name = TEXT("<empty>");
+	
+	if (!pWc->minimized) {
+		return;
+	}
+	
+	if (pGameInfo->player_count >= 1) {
+		host_name = GetPlayerName(pWc->use_local_names, &(pGameInfo->playerinfo[0]));
+	}
+	
+	GetGameTitle(pGameInfo, title);
+	switch (action) {
+		case GAME_QUIT:
+		break;
+		
+		case GAME_NEW:
+			const TCHAR *name;
+			snwprintf(text, 256, TEXT("New game hosted by %ls"), host_name);
+			
+			ShowBalloon(pWc, text, title);
+		break;
+	}
+}
+
+GameInfo* FindGame(GameInfo *pGameInfo, int count, DWORD unique_identifier) {
+	for (int i=0; i<count; i++, pGameInfo++) {
+		if (pGameInfo->unique_identifier == unique_identifier) {
+			return pGameInfo;
+		}
+	}
+	
+	return NULL;
+}
+
+enum PLAYER_NOTIFY_ACTION {
+	PLAYER_JOINED,
+	PLAYER_QUIT,
+	PLAYER_CHANGED_NICK,
+} PLAYER_NOTIFY_ACTION;
+
+void CALLBACK NotifyPlayersChanged(WindowControls *pWc, GameInfo *pGameInfo, PlayerInfo *pPlayerOld, PlayerInfo *pPlayerNew, enum PLAYER_NOTIFY_ACTION action) {
+	TCHAR title[64], text[256];
+	if (!pWc->minimized) {
+		return;
+	}
+	
+	const TCHAR *name = GetPlayerName(pWc->use_local_names, pPlayerNew ? pPlayerNew : pPlayerOld);
+	GetGameTitle(pGameInfo, title);
+	switch (action) {
+		case PLAYER_QUIT:
+			snwprintf(text, 256, TEXT("%ls left server"), name);
+			ShowBalloon(pWc, text, title);
+		break;
+		
+		case PLAYER_JOINED:
+			snwprintf(text, 256, TEXT("%ls joined server"), name);
+			ShowBalloon(pWc, text, title);
+		break;
+		
+		case PLAYER_CHANGED_NICK:
+			snwprintf(text, 256, TEXT("%ls is now known as %ls\r\nAlso known as: %ls"), pPlayerOld->ingame_name, pPlayerNew->ingame_name, name);
+			ShowBalloon(pWc, text, title);
+		break;
+	}
+}
+
+PlayerInfo* FindPlayer(GameInfo *pGameInfo, DWORD unique_identifier) {
+	for (int i=0; i<pGameInfo->player_count; i++) {
+		PlayerInfo *pPlayerInfo = &(pGameInfo->playerinfo[i]);
+		if (pPlayerInfo->unique_identifier == unique_identifier) {
+			return pPlayerInfo;
+		}
+	}
+	
+	return NULL;
+}
+
+void CALLBACK NotifyGameOpen(WindowControls *pWc, GameInfo *pGameInfo) {
+	// This is called, I just haven't implemented the autojoin feature yet.
+}
+
+BOOL b64decodeW(const char *b64_data, wchar_t *output, DWORD output_size) {
 	DWORD size = output_size;
-	if (!CryptStringToBinaryA(b64_data, 0, CRYPT_STRING_BASE64, (BYTE*)output, &size, NULL, NULL)) {
-		CopyMemory(output, "B64 DECODE ERROR\0", 17);
+	char tmp[output_size];
+	ZeroMemory(output, output_size);
+	ZeroMemory(tmp, output_size);
+	
+	if (!CryptStringToBinaryA(b64_data, 0, CRYPT_STRING_BASE64, (BYTE*)tmp, &size, NULL, NULL)) {
+		// snprintf(output, output_size, "%s", "B64 DECODE ERROR");
+		snwprintf(output, output_size, TEXT("B64 DECODE ERROR"));
 		return FALSE;
 	}
 	
+	mbstowcs(output, tmp, output_size);
 	return TRUE;
 }
 
@@ -94,14 +208,52 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 	char decoded[512];
 	
 	if (pKvi->status == KVI_STATUS_COMPLETE || pKvi->status == KVI_STATUS_ERROR) {
-		EndScan(pWc);
-		
 		if (pKvi->status == KVI_STATUS_ERROR) {
 			if (pWc->iContinueScan) { // Error was not caused by user cancelling
 				MessageBox(pWc->hMain, pKvi->err, TEXT("Error"), MB_OK | MB_ICONERROR);
 			}
 		}
 		
+		// For each old game, if it is not in the new game list, send a notify game closed message.
+		for (int ig=0; ig<pWc->gameinfo_prev_count; ig++) {
+			GameInfo *pOldGame = &(pWc->gameinfo_prev[ig]);
+			GameInfo *pNewGame = FindGame(pWc->gameinfo, pWc->scan_count_servers, pOldGame->unique_identifier);
+			
+			// Old game is no longer present in new game list
+			if (!pNewGame) {
+				NotifyGameChanged(pWc, pOldGame, GAME_QUIT);
+			} else {
+				// Old game is present in current game list
+				
+				// Who left?
+				for (int ip=0; ip<pOldGame->player_count; ip++) {
+					// Player was in the old game, but may not be in the new game.
+					PlayerInfo *pOldPlayer = &(pOldGame->playerinfo[ip]);
+					if (!FindPlayer(pNewGame, pOldPlayer->unique_identifier)) {
+						NotifyPlayersChanged(pWc, pNewGame, pOldPlayer, NULL, PLAYER_QUIT);
+					}
+				}
+				
+				// Who joined, or changed nick?
+				for (int ip=0; ip<pNewGame->player_count; ip++) {
+					// Check if player is in the new game, but was not in the old game.
+					PlayerInfo *pActivePlayer = &(pNewGame->playerinfo[ip]);
+					PlayerInfo *pActivePlayerOld = FindPlayer(pOldGame, pActivePlayer->unique_identifier);
+					
+					// Player was in game last time we checked
+					if (pActivePlayerOld) {
+						if (tstrcmp(pActivePlayer->ingame_name, pActivePlayerOld->ingame_name)) {
+							NotifyPlayersChanged(pWc, pNewGame, pActivePlayerOld, pActivePlayer, PLAYER_CHANGED_NICK);
+						}
+					} else {
+						// Player was not in last game we checked, new player
+						NotifyPlayersChanged(pWc, pNewGame, pActivePlayerOld, pActivePlayer, PLAYER_JOINED);
+					}
+				}
+			}
+		}
+		
+		EndScan(pWc);
 		return 1; // In this case, return value does not matter, because processing is already completed or terminated.
 	}
 	
@@ -128,7 +280,7 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 		ZeroMemory(pWc->scan_game, sizeof(GameInfo)); // New server begin
 	}
 	
-	printf("\"%s\": %s\n", pKvi->key_str, pKvi->value_str);
+	// printf("\"%s\": %s\n", pKvi->key_str, pKvi->value_str);
 	
 	if (pKvi->is_player) {
 		if (pWc->scan_game == NULL) {
@@ -149,12 +301,13 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 		
 		switch (GetKeyIdentifier(pKvi->key_str, PLAYER_KEY_TO_ID)) {
 			case PLAYERKEY_NAME:
-				b64decode(pKvi->value_str, decoded, 512);
-				snwprintf(pWc->scan_player->ingame_name, PLAYER_NAME_LEN, TEXT("%s"), decoded);
+				ZeroMemory(pWc->scan_player->ingame_name, PLAYER_NAME_LEN);
+				b64decodeW(pKvi->value_str, pWc->scan_player->ingame_name, PLAYER_NAME_LEN);
 			break;
 			
 			case PLAYERKEY_USERID:
 				snwprintf(pWc->scan_player->user_id, USER_ID_LEN, TEXT("%s"), pKvi->value_str);
+				pWc->scan_player->unique_identifier = CalcCRC32A(pKvi->value_str);
 			break;
 			
 			case PLAYERKEY_TEAM:
@@ -173,8 +326,8 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 	} else {
 		switch (GetKeyIdentifier(pKvi->key_str, SERVER_KEY_TO_ID)) {
 			case SERVERKEY_NAME:
-				b64decode(pKvi->value_str, decoded, 512);
-				snwprintf(pWc->scan_game->name, SERVER_NAME_LEN, TEXT("%s"), decoded);
+				ZeroMemory(pWc->scan_game->name, SERVER_NAME_LEN);
+				b64decodeW(pKvi->value_str, pWc->scan_game->name, SERVER_NAME_LEN);
 			break;
 			
 			case SERVERKEY_MAP:
@@ -228,11 +381,32 @@ int ProcessSessionInfo(KeyValueInfo *pKvi, void *pCustomData) {
 			case SERVERKEY_KILLLIMIT:
 				pWc->scan_game->killlimit = atoi(pKvi->value_str);
 			break;
+			
+			case SERVERKEY_G:
+				pWc->scan_game->unique_identifier = CalcCRC32A(pKvi->value_str);
+			break;
 		}
 		
 		if (pKvi->status == KVI_STATUS_LAST) {
 			snwprintf(pWc->scan_game->mod_name, SERVER_NAME_LEN, TEXT("%lu"), pWc->scan_game->mod_id[0]); // TODO - Get mod name
 			GameInfoToRow(pWc->hGameList, pWc->scan_game); // New server flush
+			
+			if (pWc->scan_game->unique_identifier) {
+				// Check if this game was in the old game list
+				GameInfo *pOldGameInfo = FindGame(pWc->gameinfo_prev, pWc->gameinfo_prev_count, pWc->scan_game->unique_identifier);
+				if (pOldGameInfo) {
+					if (pOldGameInfo->player_count >= pOldGameInfo->playerlimit) {
+						if (pWc->scan_game->player_count < pWc->scan_game->playerlimit) {
+							// Game was previously full last we scanned, but now it is open.
+							NotifyGameOpen(pWc, pWc->scan_game);
+						}
+					}
+				} else {
+					// New game
+					NotifyGameChanged(pWc, pWc->scan_game, GAME_NEW);
+				}
+			}
+			
 			if (pWc->remember_sort && pWc->last_col_sort_index >= 0) {
 				ListView_SortItems(pWc->hGameList, CompareFunc, pWc);
 			}
@@ -518,11 +692,12 @@ void SetPlayerStatus(WindowControls *pWc) {
 
 DWORD WINAPI ScanThread(LPVOID void_pWc) {
 	WindowControls *pWc = (WindowControls*)void_pWc;
+	
+	CopyMemory(pWc->gameinfo_prev, pWc->gameinfo, sizeof(GameInfo) * MAX_SERVERS);
+	pWc->gameinfo_prev_count = pWc->scan_count_servers;
 	pWc->scan_count_servers = pWc->scan_count_players = 0;
 	
-	if (!pWc->host_name[0]) {
-		// No host name, treat host_file as file on disk.
-		// This is what I used for debugging the parser.
+	if (!pWc->host_port) {
 		return ScanFile(pWc->host_file, ProcessSessionInfo, (void*)pWc);
 	} else {
 		// Server scan
@@ -1042,6 +1217,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 				// Minimize to tray
 				case SC_MINIMIZE:
 					ShowWindow(hWnd, SW_HIDE);
+					pWc->pTray->uFlags = NIF_MESSAGE | NIF_ICON;
 					Shell_NotifyIcon(NIM_ADD, pWc->pTray);
 					pWc->minimized = TRUE;
 				break;
@@ -1207,7 +1383,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 								"\r\n"
 								"Server Version: %ls\r\n"
 								"\r\n"
-								//~ "Not playing or in shell for %d minutes\r\n" // How to know if in shell or ingame?
+								// "Not playing or in shell for %d minutes\r\n" // How to know if in shell or ingame?
 								"Playing for %d minutes.\r\n" // How to know if in shell or ingame?
 								"TPS: %d\r\n"
 								"Mods:\r\n"
@@ -1827,8 +2003,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// Join button
 	wc.hJoin = CreateWindowEx(
 		0x00, WC_BUTTON, BUTTON_TEXT_JOIN_GAME,
-		WS_CHILD | WS_DISABLED | WS_TABSTOP,
-		//~ WS_VISIBLE | WS_CHILD | WS_DISABLED | WS_TABSTOP,
+		WS_CHILD | WS_DISABLED | WS_TABSTOP, // WS_VISIBLE
 		0, 0, 0, 0,
 		hWnd,
 		NULL,
@@ -1921,16 +2096,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	tray.hIcon = system_icon;
 	tray.hWnd = hWnd;
 	tray.uID = 1;
-	//~ tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_INFO;
 	tray.uFlags = NIF_MESSAGE | NIF_ICON;
 	tray.uCallbackMessage = WM_APP_TRAY;
 	tray.hIcon = system_icon;
 	tray.hBalloonIcon = system_icon;
 	wc.pTray = &tray;
-	snwprintf(tray.szInfo, 256, TEXT("%ls"), TEXT("TESTING"));
-	//~ snwprintf(tray.szInfoTitle, 64, TEXT("%ls"), TEXT("TITLE TEST"));
-	//~ Shell_NotifyIcon(NIM_ADD, &tray);
-	//~ Shell_NotifyIcon(NIF_INFO, &tray);
 	
 	// Window
 	SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)&wc);

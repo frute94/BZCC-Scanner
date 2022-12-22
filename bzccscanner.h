@@ -83,20 +83,23 @@
 #define MAX_MODS 32
 
 typedef struct PlayerInfo {
-	TCHAR local_name[PLAYER_NAME_LEN]; // TODO: This should be a pointer to another source, or 0 if unapplicable.
-	TCHAR ingame_name[PLAYER_NAME_LEN]; // "n" Current name in game (decoded from b64)
-	TCHAR user_id[USER_ID_LEN]; // "i" steam or gog id string (Starts with S if steam, G if gog.)
+	TCHAR local_name[PLAYER_NAME_LEN];
+	TCHAR ingame_name[PLAYER_NAME_LEN]; // "n"
+	TCHAR user_id[USER_ID_LEN]; // "i"
 	int team; // "t"
 	int kills; // "k"
 	int deaths; // "d"
 	int score; // "s"
+	
+	BOOL quitting;
+	DWORD unique_identifier;
 } PlayerInfo;
 
 typedef struct GameInfo {
-	TCHAR version[SERVER_VER_LEN]; // "v" game version string
-	TCHAR name[SERVER_NAME_LEN]; // "n" b64 decoded game name
-	TCHAR map[SERVER_MAP_LEN]; // "m" map name without BZN
-	TCHAR msg[SERVER_HOSTMSG_LEN]; // "h" host message
+	TCHAR version[SERVER_VER_LEN]; // "v"
+	TCHAR name[SERVER_NAME_LEN]; // "n"
+	TCHAR map[SERVER_MAP_LEN]; // "m"
+	TCHAR msg[SERVER_HOSTMSG_LEN]; // "h"
 	BOOL pwd;
 	
 	unsigned long int mod_id[MAX_MODS];
@@ -114,6 +117,9 @@ typedef struct GameInfo {
 	int player_count;
 	
 	PlayerInfo playerinfo[MAX_PLAYERS];
+	
+	BOOL quitting;
+	DWORD unique_identifier;
 } GameInfo;
 
 typedef struct RenameDlgControls {
@@ -133,6 +139,7 @@ typedef struct WindowControls {
 	BOOL minimized;
 	HANDLE hScan; int iContinueScan; BOOL quitting;
 	GameInfo gameinfo[MAX_SERVERS];
+	GameInfo gameinfo_prev[MAX_SERVERS]; int gameinfo_prev_count;
 	
 	HWND hMain;
 	HWND hInDlg; // Set to a handle if currently pending results from a pop-up dialog.
@@ -169,7 +176,7 @@ typedef struct WindowControls {
 	
 	HWND hGameList;
 	
-	// Settings
+	// ---
 	int last_col_sort_index;
 	BOOL reverse_sort;
 	BOOL remember_sort;
@@ -241,6 +248,7 @@ const KeyToIdentifier PLAYER_KEY_TO_ID[] = {
 #define SERVERKEY_TIMELIMIT 12
 #define SERVERKEY_KILLLIMIT 13
 #define SERVERKEY_PING 14
+#define SERVERKEY_G 15
 const KeyToIdentifier SERVER_KEY_TO_ID[] = {
 	{"n", SERVERKEY_NAME},
 	{"m", SERVERKEY_MAP},
@@ -248,7 +256,7 @@ const KeyToIdentifier SERVER_KEY_TO_ID[] = {
 	{"gtm", SERVERKEY_GAMETIME},
 	{"mu", 0}, // ?
 	{"gt", SERVERKEY_GAMETYPE},
-	{"gtd", 0}, // ?
+	{"gtd", 0}, // ? seems to be some kind of bitfield
 	{"pg", SERVERKEY_PING}, // Ping to master server?
 	{"pgm", SERVERKEY_MAX_PING},
 	{"t", 0}, // ?
@@ -260,6 +268,7 @@ const KeyToIdentifier SERVER_KEY_TO_ID[] = {
 	{"k", SERVERKEY_PWD},
 	{"ti", SERVERKEY_TIMELIMIT},
 	{"ki", SERVERKEY_KILLLIMIT},
+	{"g", SERVERKEY_G}, // Some kind of crypto challenge? Seems to be unique
 	{"", 0} // Null-terminator
 };
 
